@@ -1,12 +1,12 @@
 #include <string>
 
-class tradfri
+class libtradfri
 {
 
 public:
     
-    tradfri();
-    ~tradfri();
+    libtradfri();
+    ~libtradfri();
 
     void speak(const std::string& word);
 

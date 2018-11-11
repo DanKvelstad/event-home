@@ -1,4 +1,4 @@
-#include "tradfri.h"
+#include "libtradfri.h"
 #include <signal.h>
 #include <string>
 #include <string.h>
@@ -11,18 +11,16 @@
 #include <sstream>
 #include <iterator>
 
-std::atomic<bool> keep_alive(true);
+std::atomic<bool> main_keep_alive(true);
 
 int main(int argc, char *argv[])
 {
-
-	tradfri library;
 
 	auto signal_handler(
 		[](int signum)
 		{
 			std::cout << "Stopping because of " << strsignal(signum) << std::endl;
-			keep_alive = false;
+			main_keep_alive = false;
 		}
 	);
 
@@ -31,62 +29,90 @@ int main(int argc, char *argv[])
 	sigaction(SIGINT, &signal_action, NULL);
 	sigaction(SIGTERM, &signal_action, NULL);
 
-	std::vector<std::string> args;
+	libtradfri tradfri;
+	std::vector<std::string> command;
+	command.reserve(32);
+
 	for (int i = 1; i < argc; i++)
 	{
-		args.push_back(argv[i]);
+		command.push_back(argv[i]);
 	}
 
     std::map<
         std::string, 
-        std::function<void(std::vector<std::string>)>
+        std::function<
+			void(
+				decltype(command)::const_iterator, 
+				decltype(command)::const_iterator
+			)
+		>
     > commands 
 	{
 		std::make_pair(
     	    "help",
-    	    [](std::vector<std::string> args)
+    	    [&](decltype(command)::const_iterator begin, decltype(command)::const_iterator end)
     	    {
-    	        std::cout << "there is no help\n";
+    	        std::for_each(
+					commands.begin(), commands.end(),
+					[](decltype(commands)::const_reference element)
+					{
+						std::cout << "    " << element.first << '\n';
+					}
+				);
     	    }
     	),
     	std::make_pair(
     	    "speak",
-    	    [&](std::vector<std::string> args)
+    	    [&](decltype(command)::const_iterator begin, decltype(command)::const_iterator end)
     	    {
-    	        if(args.empty())
+    	        if(begin == end)
     	        {
-    	            library.speak("no args");
+    	            tradfri.speak("    please provide args");
     	        }
     	        else
     	        {
-    	            library.speak(args.at(0));
+					std::for_each(
+						begin, end, 
+						std::bind(&libtradfri::speak, &tradfri, std::placeholders::_1)
+					);
     	        }
+    	    }
+    	),
+    	std::make_pair(
+    	    "exit",
+    	    [&](decltype(command)::const_iterator begin, decltype(command)::const_iterator end)
+    	    {
+    	        main_keep_alive = false;
     	    }
     	)
 	};
 
-	auto interpret(
-		[&](std::vector<std::string> line)
+	auto interpreter(
+		[](
+			const decltype(commands)&         commands,
+			decltype(command)::const_iterator begin, 
+			decltype(command)::const_iterator end
+		)
 		{
-		    auto command(commands.find(line.at(0)));
-		    if(commands.end()==command)
+		    auto command(commands.find(*begin));
+		    if(commands.end() == command)
 		    {
-		        std::cout << "faulty command: " << line.at(0) << "\n";
+		        std::cout << "    faulty command: " << *begin << "\n";
 		    }
-		    else
+		    else if(begin != end)
 		    {
-		        command->second(
-		            std::vector<std::string>(
-		                ++line.begin(), line.end()
-		            )
-		        );
+		        command->second(++begin, end);
 		    }
+			else
+			{
+		        command->second(begin, end);
+			}
 		}
 	);
 
-	if (!args.empty())
+	if (!command.empty())
     {
-        interpret(args);
+        interpreter(commands, command.cbegin(), command.cend());
     }
     else
     {
@@ -98,7 +124,7 @@ int main(int argc, char *argv[])
         try
         {
             std::string line;
-            while(keep_alive)
+            while(main_keep_alive)
             {
 				std::cout << "> ";
                 if(std::getline(std::cin, line).good())
@@ -106,8 +132,10 @@ int main(int argc, char *argv[])
 					std::stringstream ss(line);
 					std::istream_iterator<std::string> begin(ss);
 					std::istream_iterator<std::string> end;
-                    interpret(std::vector<std::string>(begin, end));
+					std::copy(begin, end, std::back_inserter(command));
+                    interpreter(commands, command.cbegin(), command.cend());
                 }
+				command.clear();
             }
         }
         catch(const std::system_error& runtime_error)
